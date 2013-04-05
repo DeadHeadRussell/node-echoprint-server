@@ -47,53 +47,53 @@ exports.debugQuery = function(req, res) {
     fp = fingerprinter.cutFPLength(fp);
     
     fingerprinter.bestMatchForQuery(fp, config.code_threshold,
-      function(err, result, allMatches)
-    {
-      if (err) {
-        log.warn('Failed to complete debug query: ' + err);
-        return server.renderView(req, res, 500, 'debug.jade',
-          { err: 'Lookup failed', input: req.body.json });
-      }
-      
-      var duration = new Date() - req.start;
-      log.debug('Completed debug lookup in ' + duration + 'ms. success=' +
-        !!result.success + ', status=' + result.status);
-      
-      // TODO: Determine a useful set of data to return about the query and
-      // each match and return it in an HTML view
-      if (allMatches) {
-        async.forEach(allMatches,
-          function(match, done) {
-            fingerprinter.getTrackMetadata(match, null, null, function(err) {
-              match.codeLength = Math.ceil(match.length * fingerprinter.SECONDS_TO_TIMESTAMP);
-              // Find each match that contributed to ascore
-              getContributors(fp, match);
-              delete match.codes;
-              delete match.times;
+      function(err, result, allMatches) {
+        if (err) {
+          log.warn('Failed to complete debug query: ' + err);
+          return server.renderView(req, res, 500, 'debug.jade',
+            { err: 'Lookup failed', input: req.body.json });
+        }
+        
+        var duration = new Date() - req.start;
+        log.debug('Completed debug lookup in ' + duration + 'ms. success=' +
+          !!result.success + ', status=' + result.status);
+        
+        // TODO: Determine a useful set of data to return about the query and
+        // each match and return it in an HTML view
+        if (allMatches) {
+          async.forEach(allMatches,
+            function(match, done) {
+              fingerprinter.getMovieMetadata(match, null, null, function(err) {
+                match.codeLength = Math.ceil(match.length * fingerprinter.SECONDS_TO_TIMESTAMP);
+                // Find each match that contributed to ascore
+                getContributors(fp, match);
+                delete match.codes;
+                delete match.times;
+                
+                done(err);
+              });
+            },
+            function(err) {
+              if (err) {
+                return server.renderView(req, res, 500, 'debug.jade',
+                  { err: 'Metadata lookup failed:' + err });
+              }
               
-              done(err);
-            });
-          },
-          function(err) {
-            if (err) {
-              return server.renderView(req, res, 500, 'debug.jade',
-                { err: 'Metadata lookup failed:' + err });
+              renderView();
             }
-            
-            renderView();
-          }
-        );
-      } else {
-        renderView();
+          );
+        } else {
+          renderView();
+        }
+        
+        function renderView() {
+          var json = JSON.stringify({ success: !!result.success, status: result.status,
+            queryLen: fp.codes.length, matches: allMatches, queryTime: duration });
+          return server.renderView(req, res, 200, 'debug.jade', { res: json,
+            input: req.body.json });
+        }
       }
-      
-      function renderView() {
-        var json = JSON.stringify({ success: !!result.success, status: result.status,
-          queryLen: fp.codes.length, matches: allMatches, queryTime: duration });
-        return server.renderView(req, res, 200, 'debug.jade', { res: json,
-          input: req.body.json });
-      }
-    });
+    );
   });
 };
 
@@ -131,18 +131,19 @@ function getContributors(fp, match) {
     var matchTimes = matchCodesToTimes[code];
     if (matchTimes) {
       for (j = 0; j < matchTimes.length; j++) {
-        var dist = Math.abs(time - matchTimes[j]);
+        var dist = Math.abs(matchTimes[j] - time);
         if (dist < minDist)
           minDist = dist;
       }
       
+      minDist *= 2;
       if (minDist < MAX_DIST) {
         // If minDist is in topOffsets, add a contributor object
         for (j = 0; j < topOffsets.length; j++) {
           if (minDist === parseInt(topOffsets[j][0], 10)) {
             match.contributors.push({
               code: code,
-              time: time,
+              time: time * fingerprinter.MATCH_SLOP,
               dist: minDist
             });
             break;
